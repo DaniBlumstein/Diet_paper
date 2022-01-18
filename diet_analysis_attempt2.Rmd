@@ -1,0 +1,1521 @@
+---
+title: "diet analysis"
+author: "Dani Blumstein"
+date: "9/30/2020"
+output: html_document
+---
+libs
+```{r}
+library(ggplot2)
+library(tidyverse)
+library(car) 
+library(lubridate)
+library(ggpubr)
+library(ggpmisc)
+library(gridExtra)
+library(rlist)
+library(broom)
+library(nlme)
+library(rstatix)
+library(compositions)
+library(maditr)
+library(RColorBrewer)
+library(changepoint)
+library(mcp)
+library(EnvCpt)
+require(grDevices)
+library(ggfortify)
+library(tsbox)
+library(zoo)
+library(bcp)
+library(plyr)
+library(cowplot)
+library(broom)
+library(gridGraphics)
+library(ggsignif)
+library(ARTool)
+library(dplyr)
+```
+function for saving images 
+```{r}
+library(reshape)
+library(reshape2)
+library(tidyverse)
+library(viridis)
+library(data.table)
+library(gridExtra)
+library(grid)
+
+
+save <- function(name, fig_len, fig_width,plot_name)
+{
+library(Cairo)
+
+Cairo::Cairo(
+  fig_len, #length
+  fig_width, #width
+  file = paste(name, ".png", sep = ""),
+  type = "png", #tiff
+  bg = "transparent", #white or transparent depending on your requirement 
+  dpi = 300,
+  units = "cm" #you can change to pixels etc 
+)
+plot(plot_name) #p is your graph object 
+dev.off()
+}
+```
+
+read in the data
+```{r}
+electrolyte_data_diet <- read.csv("/Users/danielleblumstein/OneDrive - USNH/BOX/Cactus_Mouse_Physiology/data/5015_lowfat/electrolyte_data.csv")
+setwd("/Users/danielleblumstein/OneDrive - USNH/BOX/Cactus_Mouse_Physiology/data/5015_lowfat")
+
+data <- read_csv("diet_analysis_data.csv", 
+                 col_types = cols(Sex = col_character(),
+                                  EE = col_double(),
+                                  H2Omg = col_double(),
+                                  RQ = col_double(),
+                                  Animal_ID = col_character(),
+                                  Deg_C = col_double(),
+                                  weight = col_double(),
+                                  experiment = col_character(),
+                                  StartTime = col_character(), #col_time(format = "%H:%M:%S"), - changed for easy use of lubridate
+                                  SD_VCO2 = col_double(),
+                                  SD_VO2 = col_double(),
+                                  SD_H2Omg = col_double(),
+                                  VO2 = col_double(),
+                                  VCO2 = col_double(),
+                                  StartDate = col_date(format = "%Y-%m-%d"), 
+                                  hour = col_integer()))
+
+```
+
+Establish day and night
+```{r}
+data$time_in_S <- period_to_seconds(hms(data$StartTime)) #Total seconds to reach that point in the day
+
+#Replace mis-typed weight (29.980) with correct weight (19.980)
+data$weight[data$weight == 29.980] <- 19.980
+
+# Establish when each interval/transition starts and stops
+#Daytime interval: hrs:8:00-21:00
+daytime_interval <- period_to_seconds(hms("09:00:00")):period_to_seconds(hms("20:00:00"))
+#Night time: hrs 22:00-5:00 
+nighttime_interval <- c((period_to_seconds(hms("21:00:01")):period_to_seconds(hms("24:59:59"))), #evening portion of 'nighttime'
+                        (period_to_seconds(hms("00:00:00")):period_to_seconds(hms("06:00:00")))) #morning portion of 'nightitme'
+#Morning transition (t1): 6:00-9:00
+t1_interval <- period_to_seconds(hms("06:00:00")):period_to_seconds(hms("09:00:00"))
+#Evening transition (t2): 20-21:00
+t2_interval <- period_to_seconds(hms("20:00:00")):period_to_seconds(hms("21:00:00"))
+
+#### Create data subsets for males and females for each experiment (day, night, baseline [BL]) and each time block [e.g., t1/transition1, daytime, t2/transistion2, nighttime])
+# all males and females across all 3 experiments (BL, hot, cold)
+all_M = data[data$Sex == 'M', ]
+all_F = data[data$Sex == 'F', ]
+```
+
+# IDENTIFY AND REMOVE OUTLIERS
+### MALES ###
+```{r}
+count = 1
+dependent_variables = c("EE", "RQ", "VO2", "VCO2", "H2Omg")
+varname_list = c("EE_OLs","RQ_OLs","VO2_OLs","VCO2_OLs","H2O_OLs")
+
+for (DV in dependent_variables){
+  print(DV)
+    model <- lm(as.formula(paste0(DV, " ~ weight + experiment")), data = all_M)
+  model.metrics <- augment(model) %>% select(-.hat, -.sigma, -.fitted)
+  summ <- model.metrics %>% filter(abs(.std.resid) > 3) %>% as.data.frame()
+
+    OL_list = c()
+  masterlist = c()
+  for (each_outlier_row in 1:nrow(summ)){
+    this_weight <- summ[each_outlier_row, "weight"]
+    this_DV  <- summ[each_outlier_row, DV]
+    OL_list <- c(OL_list, (which(all_M$weight == this_weight & all_M[DV] == this_DV)))
+
+  }
+  print(OL_list)
+  #Assign list of outliers to specified variable lists (OL_list_EE, RQ, VO2, VCO2, mgH2O)
+  assign(paste("OL_list_", DV, sep = ""), OL_list)  
+}
+
+masterlist <- c(OL_list_EE, OL_list_RQ, OL_list_VO2, OL_list_VCO2, OL_list_H2Omg)
+masterlist_noDup <- unique(masterlist)
+
+all_noOL_M <- all_M[-c(masterlist_noDup),]
+dim(all_M) #6470 
+dim(all_noOL_M) #6255
+write.csv(all_noOL_M, "all_noOL_M.csv", row.names = FALSE)
+```
+
+# IDENTIFY AND REMOVE OUTLIERS
+#### FEMALES ####
+```{r}
+count = 1
+dependent_variables = c("EE", "RQ", "VO2", "VCO2", "H2Omg")
+varname_list = c("EE_OLs","RQ_OLs","VO2_OLs","VCO2_OLs","H2O_OLs")
+
+for (DV in dependent_variables){
+  print(DV)
+  model <- lm(as.formula(paste0(DV, " ~ weight + experiment")), data = all_F)
+  model.metrics <- augment(model) %>% select(-.hat, -.sigma, -.fitted)
+  summ <- model.metrics %>% filter(abs(.std.resid) > 3) %>% as.data.frame()
+  OL_list = c()
+  masterlist = c()
+  for (each_outlier_row in 1:nrow(summ)){
+    this_weight <- summ[each_outlier_row, "weight"]
+    this_DV  <- summ[each_outlier_row, DV]
+    OL_list <- c(OL_list, (which(all_F$weight == this_weight & all_F[DV] == this_DV)))
+    
+  }
+  print(OL_list)
+  assign(paste("OL_list_", DV, sep = ""), OL_list)  
+}
+
+masterlist <- c(OL_list_EE, OL_list_RQ, OL_list_VO2, OL_list_VCO2, OL_list_H2Omg)
+masterlist_noDup <- unique(masterlist)
+all_noOL_F <- all_F[-c(masterlist_noDup),]
+write.csv(all_noOL_F, "all_noOL_F.csv", row.names=FALSE)
+```
+
+datasets and subset for BL and LF
+```{r}
+all_noOL_F
+all_noOL_M
+
+all_day_noOL_M = all_noOL_M[all_noOL_M$time_in_S %in% daytime_interval, ]
+all_day_noOL_M$interval <- "light"
+  
+all_night_noOL_M = all_noOL_M[all_noOL_M$time_in_S %in% nighttime_interval, ]
+all_night_noOL_M$interval <- "dark"
+
+all_t1_noOL_M = all_noOL_M[all_noOL_M$time_in_S %in% t1_interval, ]
+all_t1_noOL_M$interval <- "T1"
+
+all_t2_noOL_M = all_noOL_M[all_noOL_M$time_in_S %in% t2_interval, ]
+all_t2_noOL_M$interval <- "T2"
+
+all_day_noOL_F = all_noOL_F[all_noOL_F$time_in_S %in% daytime_interval, ]
+all_day_noOL_F$interval <- "light"
+
+all_night_noOL_F = all_noOL_F[all_noOL_F$time_in_S %in% nighttime_interval, ]
+all_night_noOL_F$interval <- "dark"
+
+all_t1_noOL_F = all_noOL_F[all_noOL_F$time_in_S %in% t1_interval, ]
+all_t1_noOL_F$interval <- "T1"
+
+all_t2_noOL_F = all_noOL_F[all_noOL_F$time_in_S %in% t2_interval, ]
+all_t2_noOL_F$interval <- "T2"
+
+anov_data <- rbind(all_day_noOL_M,all_night_noOL_M,all_t1_noOL_M,all_t2_noOL_M,all_day_noOL_F,all_night_noOL_F,all_t1_noOL_F,all_t2_noOL_F)
+
+all_data_m <- rbind(all_day_noOL_M,all_night_noOL_M,all_t1_noOL_M,all_t2_noOL_M)
+all_data_f <- rbind(all_day_noOL_F,all_night_noOL_F,all_t1_noOL_F,all_t2_noOL_F)
+```
+
+mgH2O
+```{r}
+#area under the curve
+library(DescTools)
+library(emmeans)
+
+##H2O
+by_id <- list()
+by_id_inter <- list()
+
+data <- c()
+final <- data.frame()
+
+#sintegral(xfx)
+
+ for (ID in unique(anov_data$Animal_ID)) {
+      for (inter in unique(anov_data$interval)){ 
+        by_id[[ID]] <- filter(anov_data, Animal_ID == ID)
+        by_id_inter[[paste(ID, inter, sep = "_")]] <- filter(by_id[[ID]], interval == inter)
+        weight <- unique(by_id_inter[[paste(ID,  inter, sep = "_")]]$weight)
+        sex <- unique(by_id_inter[[paste(ID, inter, sep = "_")]]$Sex)
+        exp <- unique(by_id_inter[[paste(ID, inter, sep = "_")]]$experiment)
+        z <- AUC(by_id_inter[[paste(ID, inter, sep = "_")]]$H2Omg, by_id_inter[[paste(ID, inter, sep = "_")]]$time_in_S)
+        data <- c(ID,inter,exp, z, weight, sex)
+        final <- rbind(final, data)
+    }
+  }
+
+auc_data <- final %>% 
+  rename(
+    Animal_ID = X.1079.,
+    diet = X.Low.Fat.,
+    interval = X.light.,
+    mgH2O = X.11470.63701685.,
+    weight = X.25.506.,
+    sex = X.M.
+    )
+
+auc_data$Animal_ID <- as.factor(auc_data$Animal_ID)
+auc_data$diet <- as.factor(auc_data$diet)
+auc_data$interval <- as.factor(auc_data$interval)
+auc_data$mgH2O <- as.numeric(auc_data$mgH2O)
+auc_data$weight <- as.numeric(auc_data$weight)
+auc_data$sex<- as.factor(auc_data$sex)
+auc_data$trt<- as.factor(paste(auc_data$sex, auc_data$diet))
+
+ggplot(auc_data, aes(x=mgH2O)) + 
+  geom_density()
+
+ylim <- max(auc_data$mgH2O)-3000
+ggplot(auc_data, aes(x = diet, y = mgH2O)) +
+  geom_boxplot(size = .75) +
+  geom_jitter(alpha = .5) +
+  stat_compare_means(aes(group=diet), label = "p.signif", method="t.test", label.y = ylim)+
+  facet_grid(sex ~ interval, margins = TRUE) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1))+
+  labs(x = "", y = "RWL")
+
+ggplot(auc_data, aes(x=interval, y=mgH2O, color = trt))+
+  geom_boxplot()
+
+#################
+#time intervals
+#DAY
+day <- filter(auc_data, interval == "light")
+day$mgH2O <- as.numeric(day$mgH2O)
+
+#The ANOVA
+mod<-lm(mgH2O ~ diet * sex , day)
+anova(mod)
+
+#anova with x in covar as response
+anovaX_mod<-lm(weight ~ diet * sex, day)
+anova(anovaX_mod)
+
+#transform
+day$trans <- log10(10*day$mgH2O)
+mod<-lm(trans ~ diet * sex, day)
+anova(mod)
+
+#TESTING ASSUMPTIONS
+#testing for homo of slopes
+#This interaction must be NS in order for us to carry out the ANCOVA.
+slopes_mod<-lm(trans ~ sex + diet + weight + diet:weight, day)
+anova(slopes_mod)
+
+#Perform a Shapiro-Wilk test for normality of residuals
+day$resids <- residuals(mod)
+shapiro.test(day$resids)
+
+#Perform Levene's Test for homogenity of variances
+#library(car)
+leveneTest(trans ~ diet, data = day)
+
+#Perform a Tukey 1-df Test for Non-additivity
+day$preds <- predict(mod)
+day$sq_preds <- day$preds^2
+tukey_mod<-lm(trans ~ sex + diet + sq_preds, day)
+anova(tukey_mod)
+
+#adjusting for differences in weight
+ancova_mod<-lm(trans ~ diet + sex + weight, day)
+Anova(ancova_mod, type = 2)
+#to get beta val
+summary(ancova_mod)
+
+xbar <- mean(day$weight)
+day$z <- day$trans +-0.0005936*(day$weight - xbar)
+
+anovaZ_mod<-lm(z ~ diet * sex, day)
+anova(anovaZ_mod)
+
+#post adj assumption testing
+#norm of residuals 
+day$anovaZ_resids <- residuals(anovaZ_mod)
+shapiro.test(day$anovaZ_resids)
+
+#homo of variety var
+leveneTest(z ~ sex, data = day)
+
+#Test for Nonadditivity
+day$anovaZ_preds <- predict(anovaZ_mod)
+day$sq_anovaZ_preds <- day$anovaZ_preds^2
+tukeyZ_mod<-lm(z ~ sex + diet + sq_anovaZ_preds, day)
+anova(tukeyZ_mod)
+
+emmip(anovaZ_mod, sex~diet, CIs=TRUE)
+
+library(emmeans)
+lsm <- emmeans(anovaZ_mod, specs = pairwise ~ sex:diet)
+lsm$contrasts
+
+#################
+#NIGHT
+night <- filter(auc_data, interval == "dark")
+night$mgH2O <- as.numeric(night$mgH2O)
+
+#The ANOVA
+mod<-lm(mgH2O ~ diet * sex , night)
+anova(mod)
+
+#transform
+night$trans <- log10(10*night$mgH2O)
+mod<-lm(trans ~ diet * sex, night)
+anova(mod)
+
+#anova with x in covar as response
+anovaX_mod<-lm(weight ~ diet * sex, night)
+anova(anovaX_mod)
+
+#TESTING ASSUMPTIONS
+#testing for homo of slopes
+#This interaction must be NS in order for us to carry out the ANCOVA.
+slopes_mod<-lm(trans ~ sex + diet + weight + diet:weight, night)
+anova(slopes_mod)
+
+#failed without transformation...passed with transformation
+#Perform a Shapiro-Wilk test for normality of residuals
+night$resids <- residuals(mod)
+shapiro.test(night$resids)
+
+#Perform Levene's Test for homogenity of variances
+#library(car)
+leveneTest(trans ~ diet, data = night)
+
+#Perform a Tukey 1-df Test for Non-additivity
+night$preds <- predict(mod)
+night$sq_preds <- night$preds^2
+tukey_mod<-lm(trans ~ sex + diet + sq_preds, night)
+anova(tukey_mod)
+
+
+#adjusting for differences in weight
+ancova_mod<-lm(trans ~ diet + sex + weight, night)
+Anova(ancova_mod, type = 2)
+#to get beta val
+summary(ancova_mod)
+
+xbar <- mean(night$weight)
+night$z <- night$trans + 0.0003139*(night$weight - xbar)
+
+anovaZ_mod<-lm(z ~ diet * sex, night)
+anova(anovaZ_mod)
+
+#post adj assumption testing
+#norm of residuals 
+night$anovaZ_resids <- residuals(anovaZ_mod)
+shapiro.test(night$anovaZ_resids)
+
+#homo of variety var
+leveneTest(z ~ diet, data = night)
+
+#Test for Nonadditivity
+night$anovaZ_preds <- predict(anovaZ_mod)
+night$sq_anovaZ_preds <- night$anovaZ_preds^2
+tukeyZ_mod<-lm(z ~ sex + diet + sq_anovaZ_preds, night)
+anova(tukeyZ_mod)
+
+
+library(emmeans)
+lsm <- emmeans(anovaZ_mod, specs = pairwise ~ sex:diet)
+lsm$contrast
+
+#################
+#T1
+t1 <- filter(auc_data, interval == "T1")
+t1$mgH2O <- as.numeric(t1$mgH2O)
+
+#The ANOVA
+mod<-lm(mgH2O ~ diet * sex , t1)
+anova(mod)
+
+#transform
+t1$trans <- log10(10*t1$mgH2O)
+mod<-lm(trans ~ diet * sex, t1)
+anova(mod)
+
+#anova with x in covar as response
+anovaX_mod<-lm(weight ~ diet * sex, t1)
+anova(anovaX_mod)
+
+#TESTING ASSUMPTIONS
+#testing for homo of slopes
+#This interaction must be NS in order for us to carry out the ANCOVA.
+slopes_mod<-lm(trans ~ sex + diet + weight + diet:weight, t1)
+anova(slopes_mod)
+
+#fails without transformations
+#Perform a Shapiro-Wilk test for normality of residuals
+t1$resids <- residuals(mod)
+shapiro.test(t1$resids)
+
+#Perform Levene's Test for homogenity of variances
+#library(car)
+leveneTest(trans ~ diet, data = t1)
+
+#Perform a Tukey 1-df Test for Non-additivity
+t1$preds <- predict(mod)
+t1$sq_preds <- t1$preds^2
+tukey_mod<-lm(trans ~ sex + diet + sq_preds, t1)
+anova(tukey_mod)
+
+#adjusting for differences in weight
+ancova_mod<-lm(trans ~ diet + sex + weight, t1)
+Anova(ancova_mod, type = 2)
+#to get beta val
+summary(ancova_mod)
+
+xbar <- mean(t1$weight)
+t1$z <- t1$trans + -0.006752*(t1$weight - xbar)
+
+anovaZ_mod<-lm(z ~ diet * sex, t1)
+anova(anovaZ_mod)
+
+#post adj assumption testing
+#norm of residuals 
+t1$anovaZ_resids <- residuals(anovaZ_mod)
+shapiro.test(t1$anovaZ_resids)
+
+#homo of variety var
+leveneTest(z ~ sex, data = t1)
+
+#Test for Nonadditivity
+t1$anovaZ_preds <- predict(anovaZ_mod)
+t1$sq_anovaZ_preds <- t1$anovaZ_preds^2
+tukeyZ_mod<-lm(z ~ sex + diet + sq_anovaZ_preds, t1)
+anova(tukeyZ_mod)
+
+library(emmeans)
+lsm <- emmeans(anovaZ_mod, specs = pairwise ~ sex:diet)
+lsm$contrasts
+
+
+#################
+#T2
+t2 <- filter(auc_data, interval == "T2")
+t2$mgH2O <- as.numeric(t2$mgH2O)
+
+#The ANOVA
+mod<-lm(mgH2O ~ diet * sex , t2)
+anova(mod)
+
+#anova with x in covar as response
+anovaX_mod<-lm(weight ~ diet * sex, t2)
+anova(anovaX_mod)
+
+#TESTING ASSUMPTIONS
+#testing for homo of slopes
+#This interaction must be NS in order for us to carry out the ANCOVA.
+slopes_mod<-lm(mgH2O ~ sex + diet + weight + diet:weight, t2)
+anova(slopes_mod)
+
+#Perform a Shapiro-Wilk test for normality of residuals
+t2$resids <- residuals(mod)
+shapiro.test(t2$resids)
+
+#Perform Levene's Test for homogenity of variances
+#library(car)
+leveneTest(mgH2O ~ diet, data = t2)
+
+#Perform a Tukey 1-df Test for Non-additivity
+t2$preds <- predict(mod)
+t2$sq_preds <- t2$preds^2
+tukey_mod<-lm(mgH2O ~ sex + diet + sq_preds, t2)
+anova(tukey_mod)
+
+#adjusting for differences in weight
+ancova_mod<-lm(mgH2O ~ diet + sex + weight, t2)
+Anova(ancova_mod, type = 2)
+#to get beta val
+summary(ancova_mod)
+
+xbar <- mean(t2$weight)
+t2$z <- t2$mgH2O + -361.8*(t2$weight - xbar)
+
+anovaZ_mod<-lm(z ~ diet * sex, t2)
+anova(anovaZ_mod)
+
+#post adj assumption testing
+#norm of residuals 
+t2$anovaZ_resids <- residuals(anovaZ_mod)
+shapiro.test(t2$anovaZ_resids)
+
+#homo of variety var
+leveneTest(z ~ sex, data = t2)
+
+#Test for Nonadditivity
+t2$anovaZ_preds <- predict(anovaZ_mod)
+t2$sq_anovaZ_preds <- t2$anovaZ_preds^2
+tukeyZ_mod<-lm(z ~ sex + diet + sq_anovaZ_preds, t2)
+anova(tukeyZ_mod)
+
+library(emmeans)
+lsm <- emmeans(anovaZ_mod, specs = pairwise ~ sex:diet)
+lsm$contrasts
+
+auc_master <- data.frame(auc_data$Animal_ID, auc_data$interval, auc_data$diet, auc_data$sex, auc_data$mgH2O)
+```
+
+EE
+```{r}
+by_id <- list()
+by_id_inter <- list()
+
+data <- c()
+final <- data.frame()
+
+ for (ID in unique(anov_data$Animal_ID)) {
+      for (inter in unique(anov_data$interval)){ 
+        by_id[[ID]] <- filter(anov_data, Animal_ID == ID)
+        by_id_inter[[paste(ID, inter, sep = "_")]] <- filter(by_id[[ID]], interval == inter)
+        weight <- unique(by_id_inter[[paste(ID,  inter, sep = "_")]]$weight)
+        sex <- unique(by_id_inter[[paste(ID, inter, sep = "_")]]$Sex)
+        exp <- unique(by_id_inter[[paste(ID, inter, sep = "_")]]$experiment)
+        z <- AUC(by_id_inter[[paste(ID, inter, sep = "_")]]$EE, by_id_inter[[paste(ID, inter, sep = "_")]]$time_in_S)
+        norm_z <- z/(max(by_id_inter[[paste(ID, inter, sep = "_")]]$time_in_S)-min(by_id_inter[[paste(ID, inter, sep = "_")]]$time_in_S))
+        data <- c(ID,inter,exp, z,norm_z, weight, sex)
+        final <- rbind(final, data)
+    }
+  }
+
+
+auc_data <- final %>% 
+  rename(
+    Animal_ID = X.1079.,
+    diet = X.Low.Fat.,
+    interval = X.light.,
+    EE =X.12993.9304744685.,
+    weight = X.25.506.,
+    sex = X.M.
+    )
+
+auc_data$Animal_ID <- as.factor(auc_data$Animal_ID)
+auc_data$diet <- as.factor(auc_data$diet)
+auc_data$interval <- as.factor(auc_data$interval)
+auc_data$EE <- as.numeric(auc_data$EE)
+auc_data$weight <- as.numeric(auc_data$weight)
+auc_data$sex<- as.factor(auc_data$sex)
+auc_data$trt<- as.factor(paste(auc_data$sex, auc_data$diet))
+
+ggplot(auc_data, aes(x=EE)) + 
+  geom_density()
+
+ylim <- max(auc_data$EE)-3000
+ggplot(auc_data, aes(x = diet, y = EE)) +
+  geom_boxplot(size = .75) +
+  geom_jitter(alpha = .5) +
+  stat_compare_means(aes(group=diet), label = "p.signif", method="t.test", label.y = ylim)+
+  facet_grid(sex ~ interval, margins = TRUE) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1))+
+  labs(x = "", y = "RWL")
+
+ggplot(auc_data, aes(x=interval, y=EE, color = trt))+
+  geom_boxplot()
+
+#################
+#time intervals
+#DAY
+day <- filter(auc_data, interval == "light")
+day$EE <- as.numeric(day$EE)
+
+#The ANOVA
+mod<-lm(EE ~ diet * sex , day)
+anova(mod)
+
+#anova with x in covar as response
+anovaX_mod<-lm(weight ~ diet * sex, day)
+anova(anovaX_mod)
+
+#TESTING ASSUMPTIONS
+#testing for homo of slopes
+#This interaction must be NS in order for us to carry out the ANCOVA.
+slopes_mod<-lm(EE ~ sex + diet + weight + sex:weight, day)
+anova(slopes_mod)
+
+#Perform a Shapiro-Wilk test for normality of residuals
+day$resids <- residuals(mod)
+shapiro.test(day$resids)
+
+#Perform Levene's Test for homogenity of variances
+#library(car)
+leveneTest(EE ~ sex, data = day)
+
+#Perform a Tukey 1-df Test for Non-additivity
+day$preds <- predict(mod)
+day$sq_preds <- day$preds^2
+tukey_mod<-lm(EE ~ sex + diet + sq_preds, day)
+anova(tukey_mod)
+
+#adjusting for differences in weight
+ancova_mod<-lm(EE ~ diet + sex + weight, day)
+Anova(ancova_mod, type = 2)
+#to get beta val
+summary(ancova_mod)
+
+xbar <- mean(day$weight)
+day$z <- day$EE + -177.3*(day$weight - xbar)
+
+anovaZ_mod<-lm(z ~ diet * sex, day)
+anova(anovaZ_mod)
+
+#post adj assumption testing
+#norm of residuals 
+day$anovaZ_resids <- residuals(anovaZ_mod)
+shapiro.test(day$anovaZ_resids)
+
+#homo of variety var
+leveneTest(z ~ sex, data = day)
+
+#Test for Nonadditivity
+day$anovaZ_preds <- predict(anovaZ_mod)
+day$sq_anovaZ_preds <- day$anovaZ_preds^2
+tukeyZ_mod<-lm(z ~ sex + diet + sq_anovaZ_preds, day)
+anova(tukeyZ_mod)
+
+library(emmeans)
+lsm <- emmeans(anovaZ_mod, specs = pairwise ~ sex:diet)
+lsm$contrasts
+
+#################
+#NIGHT
+night <- filter(auc_data, interval == "dark")
+night$EE <- as.numeric(night$EE)
+
+#The ANOVA
+mod<-lm(EE ~ diet * sex , night)
+anova(mod)
+
+#transform
+night$trans <- log10(10*night$EE)
+mod<-lm(trans ~ diet * sex, night)
+anova(mod)
+
+#anova with x in covar as response
+anovaX_mod<-lm(weight ~ diet * sex, night)
+anova(anovaX_mod)
+
+#TESTING ASSUMPTIONS
+#testing for homo of slopes
+#This interaction must be NS in order for us to carry out the ANCOVA.
+slopes_mod<-lm(trans ~ sex + diet + weight + diet:weight, night)
+anova(slopes_mod)
+
+#failed without transformation...passed with transformation
+#Perform a Shapiro-Wilk test for normality of residuals
+night$resids <- residuals(mod)
+shapiro.test(night$resids)
+
+#Perform Levene's Test for homogenity of variances
+#library(car)
+leveneTest(trans ~ diet, data = night)
+
+#Perform a Tukey 1-df Test for Non-additivity
+night$preds <- predict(mod)
+night$sq_preds <- night$preds^2
+tukey_mod<-lm(trans ~ sex + diet + sq_preds, night)
+anova(tukey_mod)
+
+
+#adjusting for differences in weight
+ancova_mod<-lm(trans ~ diet + sex + weight, night)
+Anova(ancova_mod, type = 2)
+#to get beta val
+summary(ancova_mod)
+
+xbar <- mean(night$weight)
+night$z <- night$trans + 0.008468*(night$weight - xbar)
+
+anovaZ_mod<-lm(z ~ diet * sex, night)
+anova(anovaZ_mod)
+
+#post adj assumption testing
+#norm of residuals 
+night$anovaZ_resids <- residuals(anovaZ_mod)
+shapiro.test(night$anovaZ_resids)
+
+#homo of variety var
+leveneTest(z ~ diet, data = night)
+
+#Test for Nonadditivity
+night$anovaZ_preds <- predict(anovaZ_mod)
+night$sq_anovaZ_preds <- night$anovaZ_preds^2
+tukeyZ_mod<-lm(z ~ sex + diet + sq_anovaZ_preds, night)
+anova(tukeyZ_mod)
+
+
+library(emmeans)
+lsm <- emmeans(anovaZ_mod, specs = pairwise ~ sex:diet)
+lsm$contrast
+
+#################
+#T1
+t1 <- filter(auc_data, interval == "T1")
+t1$EE <- as.numeric(t1$EE)
+
+#The ANOVA
+mod<-lm(EE ~ diet * sex , t1)
+anova(mod)
+
+#anova with x in covar as response
+anovaX_mod<-lm(weight ~ diet * sex, t1)
+anova(anovaX_mod)
+
+#TESTING ASSUMPTIONS
+#testing for homo of slopes
+#This interaction must be NS in order for us to carry out the ANCOVA.
+slopes_mod<-lm(EE ~ sex + diet + weight + diet:weight, t1)
+anova(slopes_mod)
+
+#Perform a Shapiro-Wilk test for normality of residuals
+t1$resids <- residuals(mod)
+shapiro.test(t1$resids)
+
+#Perform Levene's Test for homogenity of variances
+#library(car)
+leveneTest(EE ~ diet, data = t1)
+
+#Perform a Tukey 1-df Test for Non-additivity
+t1$preds <- predict(mod)
+t1$sq_preds <- t1$preds^2
+tukey_mod<-lm(EE ~ sex + diet + sq_preds, t1)
+anova(tukey_mod)
+
+#adjusting for differences in weight
+ancova_mod<-lm(EE ~ diet + sex + weight, t1)
+Anova(ancova_mod, type = 2)
+#to get beta val
+summary(ancova_mod)
+
+xbar <- mean(t1$weight)
+t1$z <- t1$EE + 31.84*(t1$weight - xbar)
+
+anovaZ_mod<-lm(z ~ diet * sex, t1)
+anova(anovaZ_mod)
+
+#post adj assumption testing
+#norm of residuals 
+t1$anovaZ_resids <- residuals(anovaZ_mod)
+shapiro.test(t1$anovaZ_resids)
+
+#homo of variety var
+leveneTest(z ~ sex, data = t1)
+
+#Test for Nonadditivity
+t1$anovaZ_preds <- predict(anovaZ_mod)
+t1$sq_anovaZ_preds <- t1$anovaZ_preds^2
+tukeyZ_mod<-lm(z ~ sex + diet + sq_anovaZ_preds, t1)
+anova(tukeyZ_mod)
+
+library(emmeans)
+lsm <- emmeans(anovaZ_mod, specs = pairwise ~ sex:diet)
+lsm$contrasts
+
+#################
+#T2
+t2 <- filter(auc_data, interval == "T2")
+t2$EE <- as.numeric(t2$EE)
+
+#The ANOVA
+mod<-lm(EE ~ diet * sex , t2)
+anova(mod)
+
+#transform
+t2$trans <- log10(10*t2$EE)
+mod<-lm(trans ~ diet * sex, t2)
+anova(mod)
+
+#anova with x in covar as response
+anovaX_mod<-lm(weight ~ diet * sex, t2)
+anova(anovaX_mod)
+
+#TESTING ASSUMPTIONS
+#testing for homo of slopes
+#This interaction must be NS in order for us to carry out the ANCOVA.
+slopes_mod<-lm(trans ~ sex + diet + weight + diet:weight, t2)
+anova(slopes_mod)
+
+#fails without transformations
+#Perform a Shapiro-Wilk test for normality of residuals
+t2$resids <- residuals(mod)
+shapiro.test(t2$resids)
+
+#Perform Levene's Test for homogenity of variances
+#library(car)
+leveneTest(trans ~ diet, data = t2)
+
+#Perform a Tukey 1-df Test for Non-additivity
+t2$preds <- predict(mod)
+t2$sq_preds <- t2$preds^2
+tukey_mod<-lm(trans ~ sex + diet + sq_preds, t2)
+anova(tukey_mod)
+
+#adjusting for differences in weight
+ancova_mod<-lm(trans ~ diet + sex + weight, t2)
+Anova(ancova_mod, type = 2)
+#to get beta val
+summary(ancova_mod)
+
+xbar <- mean(t2$weight)
+t2$z <- t2$trans + 0.008275*(t2$weight - xbar)
+
+anovaZ_mod<-lm(z ~ diet * sex, t2)
+anova(anovaZ_mod)
+
+#post adj assumption testing
+#norm of residuals 
+t2$anovaZ_resids <- residuals(anovaZ_mod)
+shapiro.test(t2$anovaZ_resids)
+
+#homo of variety var
+leveneTest(z ~ sex, data = t2)
+
+#Test for Nonadditivity
+t2$anovaZ_preds <- predict(anovaZ_mod)
+t2$sq_anovaZ_preds <- t2$anovaZ_preds^2
+tukeyZ_mod<-lm(z ~ sex + diet + sq_anovaZ_preds, t2)
+anova(tukeyZ_mod)
+
+library(emmeans)
+lsm <- emmeans(anovaZ_mod, specs = pairwise ~ sex:diet)
+lsm$contrasts
+
+auc_master <- auc_master %>% 
+  rename(
+    Animal_ID = auc_data.Animal_ID,
+    diet = auc_data.diet,
+    interval = auc_data.interval,
+    sex = auc_data.sex
+    )
+
+
+auc_master <- merge(auc_master,auc_data,by=c("Animal_ID","interval", "diet", "sex"))
+```
+
+RQ 
+```{r}
+by_id <- list()
+by_id_inter <- list()
+
+data <- c()
+final <- data.frame()
+
+ for (ID in unique(anov_data$Animal_ID)) {
+      for (inter in unique(anov_data$interval))
+      { 
+        by_id[[ID]] <- filter(anov_data, Animal_ID == ID)
+        by_id_inter[[paste(ID, inter, sep = "_")]] <- filter(by_id[[ID]], interval == inter)
+        weight <- unique(by_id_inter[[paste(ID,  inter, sep = "_")]]$weight)
+        sex <- unique(by_id_inter[[paste(ID, inter, sep = "_")]]$Sex)
+        exp <- unique(by_id_inter[[paste(ID, inter, sep = "_")]]$experiment)
+        z <- AUC(by_id_inter[[paste(ID, inter, sep = "_")]]$RQ, by_id_inter[[paste(ID, inter, sep = "_")]]$time_in_S)
+        norm_z <- z/(max(by_id_inter[[paste(ID, inter, sep = "_")]]$time_in_S)-min(by_id_inter[[paste(ID, inter, sep = "_")]]$time_in_S))
+        data <- c(ID,inter,exp, z,norm_z, weight, sex)
+        final <- rbind(final, data)
+    }
+  }
+
+
+auc_data <- final %>% 
+  rename(
+    Animal_ID = X.1079.,
+    diet = X.Low.Fat.,
+    interval = X.light.,
+    RQ =X.23889.4482013383.,
+    weight = X.25.506.,
+    sex = X.M.
+    )
+
+auc_data$Animal_ID <- as.factor(auc_data$Animal_ID)
+auc_data$diet <- as.factor(auc_data$diet)
+auc_data$interval <- as.factor(auc_data$interval)
+auc_data$RQ <- as.numeric(auc_data$RQ)
+auc_data$weight <- as.numeric(auc_data$weight)
+auc_data$sex<- as.factor(auc_data$sex)
+auc_data$trt<- as.factor(paste(auc_data$sex, auc_data$diet))
+
+ggplot(auc_data, aes(x=RQ)) + 
+  geom_density()
+
+ylim <- max(auc_data$RQ)-3000
+ggplot(auc_data, aes(x = diet, y = RQ)) +
+  geom_boxplot(size = .75) +
+  geom_jitter(alpha = .5) +
+  stat_compare_means(aes(group=diet), label = "p.signif", method="t.test", label.y = ylim)+
+  facet_grid(sex ~ interval, margins = TRUE) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1))+
+  labs(x = "", y = "RWL")
+
+ggplot(auc_data, aes(x=interval, y=RQ, color = trt))+
+  geom_boxplot()
+
+#time intervals
+#DAY
+day <- filter(auc_data, interval == "light")
+
+#The ANOVA
+mod<-lm(RQ ~ diet * sex , day)
+anova(mod)
+
+#anova with x in covar as response
+anovaX_mod<-lm(weight ~ diet * sex, day)
+anova(anovaX_mod)
+
+#transform
+day$trans <- log10(10*day$RQ)
+mod<-lm(trans ~ diet * sex, day)
+anova(mod)
+
+#TESTING ASSUMPTIONS
+#testing for homo of slopes
+slopes_mod<-lm(trans ~ sex + diet + weight + diet:weight, day)
+anova(slopes_mod)
+
+#Perform a Shapiro-Wilk test for normality of residuals
+day$resids <- residuals(mod)
+shapiro.test(day$resids)
+
+#Perform Levene's Test for homogenity of variances
+#library(car)
+leveneTest(trans ~ diet, data = day)
+
+#Perform a Tukey 1-df Test for Non-additivity
+day$preds <- predict(mod)
+day$sq_preds <- day$preds^2
+tukey_mod<-lm(trans ~ sex + diet + sq_preds, day)
+anova(tukey_mod)
+
+#adjusting for differences in weight
+ancova_mod<-lm(trans ~ diet + sex + weight, day)
+Anova(ancova_mod, type = 2)
+#to get beta val
+summary(ancova_mod)
+
+xbar <- mean(day$weight)
+day$z <- day$trans + -0.003652*(day$weight - xbar)
+
+anovaZ_mod<-lm(z ~ diet * sex, day)
+anova(anovaZ_mod)
+
+#post adj assumption testing
+#norm of residuals 
+day$anovaZ_resids <- residuals(anovaZ_mod)
+shapiro.test(day$anovaZ_resids)
+
+#homo of variety var
+leveneTest(z ~ sex, data = day)
+
+#Test for Nonadditivity
+day$anovaZ_preds <- predict(anovaZ_mod)
+day$sq_anovaZ_preds <- day$anovaZ_preds^2
+tukeyZ_mod<-lm(z ~ sex + diet + sq_anovaZ_preds, day)
+anova(tukeyZ_mod)
+
+library(emmeans)
+lsm <- emmeans(anovaZ_mod, specs = pairwise ~ sex:diet)
+contrast(lsm, method = "pairwise", adjust = "tukey")
+lsm$contrasts
+
+#################
+#NIGHT
+night <- filter(auc_data, interval == "dark")
+night$RQ <- as.numeric(night$RQ)
+
+#The ANOVA
+mod<-lm(RQ ~ diet * sex , night)
+anova(mod)
+
+#transform
+night$trans <- log10(10*night$RQ)
+mod<-lm(trans ~ diet * sex, night)
+anova(mod)
+
+#anova with x in covar as response
+anovaX_mod<-lm(weight ~ diet * sex, night)
+anova(anovaX_mod)
+
+#TESTING ASSUMPTIONS
+#testing for homo of slopes
+#This interaction must be NS in order for us to carry out the ANCOVA.
+slopes_mod<-lm(trans ~ sex + diet + weight + diet:weight, night)
+anova(slopes_mod)
+
+#failed without transformation...passed with transformation
+#Perform a Shapiro-Wilk test for normality of residuals
+night$resids <- residuals(mod)
+shapiro.test(night$resids)
+
+#Perform Levene's Test for homogenity of variances
+#library(car)
+leveneTest(trans ~ diet, data = night)
+
+#Perform a Tukey 1-df Test for Non-additivity
+night$preds <- predict(mod)
+night$sq_preds <- night$preds^2
+tukey_mod<-lm(trans ~ sex + diet + sq_preds, night)
+anova(tukey_mod)
+
+
+#adjusting for differences in weight
+ancova_mod<-lm(trans ~ diet + sex + weight, night)
+Anova(ancova_mod, type = 2)
+#to get beta val
+summary(ancova_mod)
+
+xbar <- mean(night$weight)
+night$z <- night$trans + 0.001153 *(night$weight - xbar)
+
+anovaZ_mod<-lm(z ~ diet * sex, night)
+anova(anovaZ_mod)
+
+#post adj assumption testing
+#norm of residuals 
+night$anovaZ_resids <- residuals(anovaZ_mod)
+shapiro.test(night$anovaZ_resids)
+
+#homo of variety var
+leveneTest(z ~ diet, data = night)
+
+#Test for Nonadditivity
+night$anovaZ_preds <- predict(anovaZ_mod)
+night$sq_anovaZ_preds <- night$anovaZ_preds^2
+tukeyZ_mod<-lm(z ~ sex + diet + sq_anovaZ_preds, night)
+anova(tukeyZ_mod)
+
+
+library(emmeans)
+lsm <- emmeans(anovaZ_mod, specs = pairwise ~ sex:diet)
+lsm$contrast
+
+#################
+#T1
+t1 <- filter(auc_data, interval == "T1")
+t1$RQ <- as.numeric(t1$RQ)
+
+#The ANOVA
+mod<-lm(RQ ~ diet * sex , t1)
+anova(mod)
+
+#transform
+t1$trans <- log10(10*t1$RQ)
+mod<-lm(trans ~ diet * sex, t1)
+anova(mod)
+
+#anova with x in covar as response
+anovaX_mod<-lm(weight ~ diet * sex, t1)
+anova(anovaX_mod)
+
+#TESTING ASSUMPTIONS
+#testing for homo of slopes
+#This interaction must be NS in order for us to carry out the ANCOVA.
+slopes_mod<-lm(trans ~ sex + diet + weight + diet:weight, t1)
+anova(slopes_mod)
+
+#Perform a Shapiro-Wilk test for normality of residuals
+t1$resids <- residuals(mod)
+shapiro.test(t1$resids)
+
+#Perform Levene's Test for homogenity of variances
+#library(car)
+leveneTest(trans ~ diet, data = t1)
+
+#Perform a Tukey 1-df Test for Non-additivity
+t1$preds <- predict(mod)
+t1$sq_preds <- t1$preds^2
+tukey_mod<-lm(trans ~ sex + diet + sq_preds, t1)
+anova(tukey_mod)
+
+#adjusting for differences in weight
+ancova_mod<-lm(trans ~ diet + sex + weight, t1)
+Anova(ancova_mod, type = 2)
+#to get beta val
+summary(ancova_mod)
+
+xbar <- mean(t1$weight)
+t1$z <- t1$trans + -0.02070*(t1$weight - xbar)
+
+anovaZ_mod<-lm(z ~ diet * sex, t1)
+anova(anovaZ_mod)
+
+#post adj assumption testing
+#norm of residuals 
+t1$anovaZ_resids <- residuals(anovaZ_mod)
+shapiro.test(t1$anovaZ_resids)
+
+#homo of variety var
+leveneTest(z ~ sex, data = t1)
+
+#Test for Nonadditivity
+t1$anovaZ_preds <- predict(anovaZ_mod)
+t1$sq_anovaZ_preds <- t1$anovaZ_preds^2
+tukeyZ_mod<-lm(z ~ sex + diet + sq_anovaZ_preds, t1)
+anova(tukeyZ_mod)
+
+library(emmeans)
+lsm <- emmeans(anovaZ_mod, specs = pairwise ~ sex:diet)
+lsm$contrasts
+
+#################
+#T2
+t2 <- filter(auc_data, interval == "T2")
+t2$RQ <- as.numeric(t2$RQ)
+
+#The ANOVA
+mod<-lm(RQ ~ diet * sex , t2)
+anova(mod)
+
+#transform
+t2$trans <- log10(10*t2$RQ)
+mod<-lm(trans ~ diet * sex, t2)
+anova(mod)
+
+#anova with x in covar as response
+anovaX_mod<-lm(weight ~ diet * sex, t2)
+anova(anovaX_mod)
+
+#TESTING ASSUMPTIONS
+#testing for homo of slopes
+#This interaction must be NS in order for us to carry out the ANCOVA.
+slopes_mod<-lm(trans ~ sex + diet + weight + diet:weight, t2)
+anova(slopes_mod)
+
+#fails without transformations
+#Perform a Shapiro-Wilk test for normality of residuals
+t2$resids <- residuals(mod)
+shapiro.test(t2$resids)
+
+#Perform Levene's Test for homogenity of variances
+#library(car)
+leveneTest(trans ~ diet, data = t2)
+
+#Perform a Tukey 1-df Test for Non-additivity
+t2$preds <- predict(mod)
+t2$sq_preds <- t2$preds^2
+tukey_mod<-lm(trans ~ sex + diet + sq_preds, t2)
+anova(tukey_mod)
+
+#adjusting for differences in weight
+ancova_mod<-lm(trans ~ diet + sex + weight, t2)
+Anova(ancova_mod, type = 2)
+#to get beta val
+summary(ancova_mod)
+
+xbar <- mean(t2$weight)
+t2$z <- t2$trans + -0.005369*(t2$weight - xbar)
+
+anovaZ_mod<-lm(z ~ diet * sex, t2)
+anova(anovaZ_mod)
+
+#post adj assumption testing
+#norm of residuals 
+t2$anovaZ_resids <- residuals(anovaZ_mod)
+shapiro.test(t2$anovaZ_resids)
+
+#homo of variety var
+leveneTest(z ~ sex, data = t2)
+
+#Test for Nonadditivity
+t2$anovaZ_preds <- predict(anovaZ_mod)
+t2$sq_anovaZ_preds <- t2$anovaZ_preds^2
+tukeyZ_mod<-lm(z ~ sex + diet + sq_anovaZ_preds, t2)
+anova(tukeyZ_mod)
+
+library(emmeans)
+lsm <- emmeans(anovaZ_mod, specs = pairwise ~ sex:diet)
+lsm$contrasts
+
+
+auc_master <- merge(auc_master,auc_data,by=c("Animal_ID","interval", "diet", "sex"))
+
+auc_master <- auc_master %>% 
+  rename(
+    mgH2O = auc_data.mgH2O
+    )
+
+auc_master_final <- data.frame(auc_master$Animal_ID, auc_master$interval, auc_master$diet,auc_master$sex, auc_master$mgH2O,auc_master$EE, auc_master$RQ,auc_master$weight.x)
+```
+
+weight and electro t tests
+```{r}
+#electrolyte_data <- read.csv("~/Box Sync/Cactus_Mouse_Physiology/data/electrolyte_data.csv")
+
+subset1 <- subset(electrolyte_data, electrolyte_data$experiment == "5015_lowfat")
+subset2 <- subset(electrolyte_data, electrolyte_data$experiment == "baseline")
+
+diet <- rbind(subset1, subset2)
+
+diet$experiment <- as.factor(diet$experiment)
+diet$sex <- as.factor(diet$sex)
+
+diet_exp <- diet %>% select(1, 4)
+diet_exp$experiment <- as.factor(diet_exp$experiment)
+diet_exp$weight <- as.numeric(diet_exp$weight)
+t.test(diet_exp$weight~diet_exp$experiment)
+
+diet_sex <- diet %>% select(2, 4)
+diet_sex$sex <- as.factor(diet_sex$sex)
+diet_sex$weight <- as.numeric(diet_sex$weight)
+t.test(diet_sex$weight~diet_sex$sex)
+
+
+electros <- diet %>% select(1,5:ncol(diet))
+lapply(electros[-1], function(x) t.test(x ~ electros$experiment))
+
+electros <- diet %>% select(2,5:ncol(diet))
+lapply(electros[-1], function(x) t.test(x ~ electros$sex))
+```
+
+```{r}
+ ggplotRegression <- function (fit) {
+
+    require(ggplot2)
+
+    ggplot(fit$model, aes_string(x = names(fit$model)[2], y = names(fit$model)[1])) + 
+      geom_point() +
+      stat_smooth(method = "lm", col = "red") +
+      labs(title = paste("Adj R2 = ",signif(summary(fit)$adj.r.squared, 5),
+                         "Intercept =",signif(fit$coef[[1]],5 ),
+                         " Slope =",signif(fit$coef[[2]], 5),
+                         " P =",signif(summary(fit)$coef[2,4], 5)))
+    }
+
+#split by males, females, diet, response var, and light and dark phase for metabolic vars :( i hate this kind of science
+#NA,BUN, hct, ica
+#we would present the cool plots
+#time for a for loop
+
+regression_data <- select(auc_master, mgH2O, EE, RQ)
+
+interval <- c("light","dark")
+sex <- unique(auc_master$sex.x)
+diet <- unique(auc_master$diet)
+electros <- c("Na", "K", "Crea", "BUN", "Hct", "iCa")
+
+plot_list <- list()
+n=1
+#females
+  for (a in interval) 
+    {
+      for (d in diet) 
+        {
+          loop_data <- auc_master[ which(auc_master$interval==a & auc_master$sex.x=="F" & auc_master$diet==d), ]
+          regression <- lm(EE ~ mgH2O, data = loop_data)
+          print(a)
+          print(d)
+          print(summary(regression))
+          plot1 <- ggplotRegression(regression)
+          
+          regression <- lm(EE ~ RQ, data = loop_data)
+          print(a)
+          print(d)
+          print(summary(regression))
+          plot2 <- ggplotRegression(regression)
+          
+          regression <- lm(mgH2O ~ RQ, data = loop_data)
+          print(a)
+          print(d)
+          print(summary(regression))
+          plot3 <- ggplotRegression(regression)
+          plot_list[[n]] <- plot
+          n=n+1
+        }
+  }
+
+plot_list <- list()
+n=1
+for (a in interval) 
+    {
+  for (b in electros) 
+    {
+      for (d in diet) 
+        {
+          loop_data <- auc_master[ which(auc_master$interval==a & auc_master$sex.x=="F" & auc_master$diet==d), ]
+          regression <- lm(as.formula(paste0(b, " ~ EE")), data = loop_data)
+          print(a)
+          print(d)
+          print(b)
+          print(summary(regression))
+          plot1 <- ggplotRegression(regression)
+          
+          regression <- lm(as.formula(paste0(b, " ~ RQ")), data = loop_data)
+          print(a)
+          print(d)
+          print(b)
+          print(summary(regression))
+          plot2 <- ggplotRegression(regression)
+          
+          regression <- lm(as.formula(paste0(b, " ~ mgH2O")), data = loop_data)
+          print(a)
+          print(d)
+          print(b)
+          print(summary(regression))
+          plot2 <- ggplotRegression(regression)
+          plot_list[[n]] <- plot
+          n=n+1
+        }
+      }
+    }
+
+plot_list <- list()
+n=1
+#males
+  for (a in interval) 
+    {
+      for (d in diet) 
+        {
+          loop_data <- auc_master[ which(auc_master$interval==a & auc_master$sex.x=="M" & auc_master$diet==d), ]
+          regression <- lm(EE ~ mgH2O, data = loop_data)
+          print(a)
+          print(d)
+          print(summary(regression))
+          plot1 <- ggplotRegression(regression)
+          
+          regression <- lm(EE ~ RQ, data = loop_data)
+          print(a)
+          print(d)
+          print(summary(regression))
+          plot2 <- ggplotRegression(regression)
+          
+          regression <- lm(mgH2O ~ RQ, data = loop_data)
+          print(a)
+          print(d)
+          print(summary(regression))
+          plot3 <- ggplotRegression(regression)
+          plot_list[[n]] <- plot
+          n=n+1
+        }
+      }
+
+plot_list <- list()
+n=1
+for (a in interval) 
+    {
+  for (b in electros) 
+    {
+      for (d in diet) 
+        {
+          loop_data <- auc_master[ which(auc_master$interval==a & auc_master$sex.x=="M" & auc_master$diet==d), ]
+          regression <- lm(as.formula(paste0(b, " ~ EE")), data = loop_data)
+          print(a)
+          print(d)
+          print(b)
+          print(summary(regression))
+          plot1 <- ggplotRegression(regression)
+          
+          regression <- lm(as.formula(paste0(b, " ~ RQ")), data = loop_data)
+          print(a)
+          print(d)
+          print(b)
+          print(summary(regression))
+          plot2 <- ggplotRegression(regression)
+          
+          regression <- lm(as.formula(paste0(b, " ~ mgH2O")), data = loop_data)
+          print(a)
+          print(d)
+          print(b)
+          print(summary(regression))
+          plot2 <- ggplotRegression(regression)
+          plot_list[[n]] <- plot
+          n=n+1
+        }
+      }
+    }
+multiplot(plotlist = plot_list, cols = 4)
+
+```
+
+example code for single regression and plot
+regression <- lm(auc_master.EE ~ auc_master.mgH2O, data = auc_master_final[ which(auc_master_final$auc_master.interval=='dark'), ])
+summary(regression)
+p1 <- ggplotRegression(regression)
+
+
+electrolyte box plots for diet 5015_modified (lowfat)
+```{r}
+plist_electro <- list()
+
+all_electro_T <- melt(electrolyte_data_diet, id.vars = c("experiment","sex", "weight", "mouse_ID"), variable.name = "electro")
+   
+for (i in unique(all_electro_T$electro))
+  {
+  all_electro_s <- subset(all_electro_T, all_electro_T$electro == i)
+  
+  # Plot
+  plist_electro[[i]] <-all_electro_s %>%
+  ggplot(aes(x=electro, y=value, fill=diet)) +
+    geom_violin() +
+    #scale_fill_viridis(discrete = TRUE, alpha=0.6) +
+    scale_fill_manual(values=c("#0571B0", "grey31", "#CA0020"))+
+    geom_signif(comparisons = list(c("Standard", "Low Fat")),
+                  map_signif_level = TRUE, textsize=3)+
+    geom_jitter(color="black", size=0.4, alpha=0.9) +
+    #theme_ipsum() +
+    theme(legend.position = "none") +
+    xlab("")+
+    ylab("")+
+    facet_wrap(~sex)
+  
+  }
+
+library(gridExtra)
+library(grid)
+
+electo_plots <- gridExtra::grid.arrange(grobs = plist_electro)
+
+save("diet_box_plot", 25, 15, electo_plots)
+```
+
+#### Electrolites
+two-tailed t-test (t.test), adjusted for multiple comparisons (Bonferroni correction, p.adjust), to test for significant (p < 0.05) differences in response variables between sexes for electrolyes
+```{r}
+all_dependent_variables <- colnames(electrolyte_data_diet)
+dependent_variables_e <- all_dependent_variables[c(5,6,7,8,9,11,12,13,14,15)]
+
+
+BL_M_e <- subset(electrolyte_data_diet[electrolyte_data_diet$sex == 'M' & electrolyte_data_diet$experiment == "baseline",])
+BL_F_e <- subset(electrolyte_data_diet[electrolyte_data_diet$sex == 'F' & electrolyte_data_diet$experiment == "baseline",])
+LF_M_e <- subset(electrolyte_data_diet[electrolyte_data_diet$sex == 'M' & electrolyte_data_diet$experiment == "5015_lowfat",])
+LF_F_e <- subset(electrolyte_data_diet[electrolyte_data_diet$sex == 'F' & electrolyte_data_diet$experiment == "5015_lowfat",])
+
+### M and F (all)
+MF_all_list = c("BL_M_e", "BL_F_e",
+                "LF_M_e", "LF_F_e")
+               
+#Write header to mean/sd file
+meanSD_header <- paste('DV', 'Dataset', 'mean', 'sd', sep=',')
+write.table(meanSD_header, "mean_sd_eachTreatment_Xsex_electro.csv", sep=',', col.names = FALSE, row.names = FALSE, quote = FALSE)
+
+#write head to t test results file
+t_header <- paste('Data1', 'Data2', 'DV', 'p-value', 'unadj. p', sep=',')
+write.table(t_header, "ttest_results_Xsex_electro.csv", sep=',', col.names = FALSE, row.names = FALSE, quote = FALSE)
+
+
+#For each experiment
+#Calcualte the average and SD of each dependent variable
+count = 1
+for(df in MF_all_list){
+  print(df)
+  for (DV in dependent_variables_e){
+    print(DV)
+    this_mean = mean(get(df)[[DV]])
+    this_sd = sd(get(df)[[DV]])
+    line = paste(DV, df, this_mean, this_sd, sep=',')
+    print(line)
+    print('\n')
+    write.table(line, "mean_sd_eachTreatment_Xsex_electro.csv", sep = ',', append=TRUE, col.names = FALSE, row.names = FALSE, quote = FALSE)
+    
+    #two sample t test - test whether the mean differs from other exp
+    templist <- list("BL_M_e", "BL_F_e",
+                      "LF_M_e", "LF_F_e")
+    
+    # Adjust for multiple comparisons (Bonferonni)
+    k <- length(templist)
+    num_pw_comparisons <- k*(k-1) / 2 #where k is the number of conditions being compared
+    for(data in templist){
+      ts <- t.test(get(df)[[DV]], get(data)[[DV]], conf.level = 0.95)
+      new_p <- p.adjust(ts$p.value, method = "bonferroni", num_pw_comparisons)
+      this_line=paste(df, data, DV, new_p, ts$p.value, sep = ',')
+      print(this_line)
+      write.table(this_line, "ttest_results_Xsex_electro.csv", sep=',', append = TRUE, col.names = FALSE, row.names = FALSE, quote = FALSE)
+    }
+    count = count + 1
+  }
+}
+```
+

@@ -1,0 +1,459 @@
+---
+title: "diet 1"
+author: "Dani Blumstein"
+date: "6/14/2020"
+output: html_document
+---
+
+bring in libs
+```{r}
+library(devtools)
+library(tidyverse)
+library(lubridate)
+library(readr)
+library(viridis)
+library(patchwork)
+library(tidyselect)
+library(readxl)
+```
+
+Important equations:
+RQ = CO2 eliminated/O2 consumed
+EE = 0.06 * (3.941 * VO2 + 1.106 * VCO2)
+
+from 14.4 in Leighton book
+LabDiet 5015 = (26.101/100).71+(19.752/100).83+.54148 = .8907387
+LabDiet low fat 5015 = (22.8/100).71+(6.6/100).83+.706 = .92266
+
+Functions:
+import data function
+```{r}
+bring_in_data <- function(data_file, Sex)
+{
+  data <- paste(path,data_file,sep="")
+  raw <- read_csv(data,
+        col_types = cols(Animal = col_double(), 
+        StartDate = col_date(format = "%m/%d/%Y"),
+        deltaCO2 = col_double(), 
+        deltaH2O = col_double(),
+        H2Oml = col_double(),
+        Deg_C = col_double(),
+        VCO2 = col_double(),
+        StartTime = col_time(format = "%H:%M:%S")))
+  
+  '%!in%' <- function(x,y)!('%in%'(x,y))
+
+raw <- raw %>% 
+	mutate(EE = 0.06*(3.941*VO2 + 1.106*VCO2)) %>% 
+	mutate(RQ = VCO2/VO2) %>%
+	mutate(animal = round(Animal, digits=0)) %>%
+	mutate(Animal = NULL) %>%
+  mutate(Sex  = Sex) %>%
+	unite("DateTime", StartDate:StartTime, remove = FALSE, sep =  " ") %>%
+	mutate(weight = 
+		ifelse(animal == 0, cageweight0, 
+		ifelse(animal == 1, cageweight1,
+		ifelse(animal == 2, cageweight2,
+		ifelse(animal == 3, cageweight3,
+		ifelse(animal == 4, cageweight4,
+		ifelse(animal == 5, cageweight5,
+		ifelse(animal == 6, cageweight6, NA)))))))) %>% 
+	mutate(Animal_ID = 
+		ifelse(animal == 0, animalID0, 
+		ifelse(animal == 1, animalID1,
+		ifelse(animal == 2, animalID2,
+		ifelse(animal == 3, animalID3,
+		ifelse(animal == 4, animalID4,
+		ifelse(animal == 5, animalID5,
+		ifelse(animal == 6, animalID6, NA)))))))) %>% 
+	mutate(H2Omg_edit = 
+		ifelse(hour(StartTime) == 8, H2Omg,
+		ifelse(hour(StartTime) == 7, H2Omg,
+		ifelse(hour(StartTime) == 9, H2Omg,
+		ifelse(hour(StartTime) == 10, H2Omg,
+		ifelse(hour(StartTime) == 19, H2Omg,
+		ifelse(hour(StartTime) == 20, H2Omg,
+		ifelse(hour(StartTime) == 21, H2Omg,
+		ifelse(hour(StartTime) == 22, H2Omg,
+		ifelse(hour(StartTime) %!in% c(7,8,9,10,20,21,22,19), H2Omg, NA)))))))))) %>% 
+	mutate_at("H2Omg_edit", as.numeric)
+
+#metric <- "corEE"
+
+target <- c(0,1,2,3,4,5,6,7)
+cages <- raw %>% filter(animal %in% target)
+
+  
+  #start_time <- ymd_hms(subset[[5]][1])
+  #begin_experiment <- start_time + dhours(2)
+  #end_time <- begin_experiment + dhours(72)
+  #filtered <- subset %>% filter(raw$DateTime >= begin_experiment & raw$DateTime <= end_time)
+  
+  
+  return(cages)
+}
+```
+
+mouse id and weights function
+will add electrolytes....one day
+```{r}
+weight_ID <- function(date)
+{  
+  subset <- electrolyte_data[which(electrolyte_data$experiment_date == date), names(electrolyte_data) %in% c("sex", "mouse_ID", "cage_number", "weight", "Na", "K", "Cl", "TCO2", "BUN", "Crea", "Glu", "iCa", "AnGap", "Hct", "Hb*")]
+  
+  ids <- subset$mouse_ID
+  weights <- as.double(subset$weight)
+  
+  x = 0
+
+  for (i in 1:length(ids))
+  {
+    assign(paste("animalID", x, sep = ""), ids[i], envir = parent.frame())
+    assign(paste("cageweight", x, sep = ""), weights[i], envir = parent.frame())
+    x = x + 1
+  }
+} 
+```
+
+merge data and subset for 72 hours function
+```{r}
+merge_data <- function(cage)
+{
+  start_time <- ymd_hms(cage[[1]][1])
+  begin_experiment <- start_time + dhours(2)
+  end_time <- begin_experiment + dhours(72)
+  filtered <- cage %>% filter(DateTime >= begin_experiment & DateTime <= end_time)
+  
+  return(filtered)
+}
+```
+
+import data
+electrolyte and weight data
+and path to files. this should be one of the only things edited for now 
+```{r}
+path <- "/Users/danielleblumstein/OneDrive - USNH/BOX/Cactus_Mouse_Physiology/data/"
+electrolyte_data <- read_excel(paste(path,"electrolyte_data.xlsx",sep=""), na = "NA")
+```
+
+modified diet males
+June 12, 2020
+i think this was a test?
+```{r}
+# weight_ID("12-Jun-20")
+# cages12june1 <- bring_in_data("12June20/12_june_20_1.csv", "M")
+# 
+# weight_ID("12-Jun-20")
+# cages12june2 <- bring_in_data("12June20/12_june_20_2.csv", "M")
+# 
+# weight_ID("12-Jun-20")
+# cages12june3 <- bring_in_data("12June20/12_june_20_3.csv", "M")
+# 
+# weight_ID("12-Jun-20")
+# cages12june4 <- bring_in_data("12June20/12_june_20_4.csv", "M")
+# 
+# weight_ID("12-Jun-20")
+# cages12june5 <- bring_in_data("12June20/12_june_20_5.csv", "M")
+# 
+# weight_ID("12-Jun-20")
+# cages12june6 <- bring_in_data("12June20/12_june_20_6.csv", "M")
+# 
+# weight_ID("12-Jun-20")
+# cages12june7 <- bring_in_data("12June20/12_june_20_7.csv", "M")
+# 
+# weight_ID("12-Jun-20")
+# cages12june8 <- bring_in_data("12June20/12_june_20_8.csv", "M")
+# 
+# weight_ID("12-Jun-20")
+# cages12june9 <- bring_in_data("12June20/12_june_20_9.csv", "M")
+# 
+# cages12june <- rbind( cages12june8,cages12june9)
+# 
+# ggplot(cages12june, aes(as.POSIXct(with(cages12june, StartDate + hms(StartTime))),y=Deg_C))+
+#   scale_x_datetime(date_breaks = "2 hours", date_labels = "%H:%M")+
+#   geom_line()
+```
+
+test
+```{r}
+# weight_ID("12-Jun-20")
+# cages12june1 <- bring_in_data("diet_test_26June20/26June20_1.csv", "M")
+# 
+# cages12june2 <- bring_in_data("diet_test_26June20/26June20_2.csv", "M")
+# 
+# cages12june3 <- bring_in_data("diet_test_26June20/26June20_3.csv", "M")
+# 
+# cages12june4 <- bring_in_data("diet_test_26June20/26June20_4.csv", "M")
+# 
+# cages12june5 <- bring_in_data("diet_test_26June20/26June20_5.csv", "M")
+# 
+# cages12june <- rbind( cages12june1,cages12june2,cages12june3, cages12june4, cages12june5)
+# 
+# ggplot(cages12june, aes(as.POSIXct(with(cages12june, StartDate + hms(StartTime))),y=Deg_C))+
+#   scale_x_datetime(date_breaks = "2 hours", date_labels = "%H:%M")+
+#   geom_line()
+```
+
+male modified 1
+wrong night time ramp
+```{r}
+# weight_ID("7-July-20")
+# cages7july1 <- bring_in_data("5015_lowfat/6July20/6July20_1.csv", "M")
+# cages7july2 <- bring_in_data("5015_lowfat/6July20/6July20_2.csv", "M")
+# cages7july3 <- bring_in_data("5015_lowfat/6July20/6July20_3.csv", "M")
+# cages7july4 <- bring_in_data("5015_lowfat/6July20/6July20_4.csv", "M")
+# cages7july5 <- bring_in_data("5015_lowfat/6July20/6July20_5.csv", "M")
+# cages7july6 <- bring_in_data("5015_lowfat/6July20/6July20_6.csv", "M")
+# cages7july7 <- bring_in_data("5015_lowfat/6July20/6July20_7.csv", "M")
+# cages7july8 <- bring_in_data("5015_lowfat/6July20/6July20_8.csv", "M")
+# cages7july9 <- bring_in_data("5015_lowfat/6July20/6July20_9.csv", "M")
+# cages7july10 <- bring_in_data("5015_lowfat/6July20/6July20_10.csv", "M")
+# cages7july11 <- bring_in_data("5015_lowfat/6July20/6July20_11.csv", "M")
+# cages7july12 <- bring_in_data("5015_lowfat/6July20/6July20_12.csv", "M")
+# cages7july13 <- bring_in_data("5015_lowfat/6July20/6July20_13.csv", "M")
+# cages7july14 <- bring_in_data("5015_lowfat/6July20/6July20_14.csv", "M")
+# cages7july15 <- bring_in_data("5015_lowfat/6July20/6July20_15.csv", "M")
+# 
+# cages7july <- merge_data(rbind(cages7july13,cages7july14,cages7july15))
+# 
+# ggplot(cages7july, aes(as.POSIXct(with(cages7july, StartDate + hms(StartTime))),y=Deg_C))+
+#   scale_x_datetime(date_breaks = "2 hours", date_labels = "%H:%M")+
+#   geom_line()
+```
+
+modified females
+wrong night time ramp
+```{r}
+# weight_ID("23-July-20")
+# cages23july1 <- bring_in_data("5015_lowfat/23July20/23July20_1.csv", "F")
+# cages23july2 <- bring_in_data("5015_lowfat/23July20/23July20_2.csv", "F")
+# cages23july3 <- bring_in_data("5015_lowfat/23July20/23July20_3.csv", "F")
+# cages23july4 <- bring_in_data("5015_lowfat/23July20/23July20_4.csv", "F")
+# cages23july5 <- bring_in_data("5015_lowfat/23July20/23July20_5.csv", "F")
+# cages23july6 <- bring_in_data("5015_lowfat/23July20/23July20_6.csv", "F")
+# cages23july7 <- bring_in_data("5015_lowfat/23July20/23July20_7.csv", "F")
+# cages23july8 <- bring_in_data("5015_lowfat/23July20/23July20_8.csv", "F")
+# cages23july9 <- bring_in_data("5015_lowfat/23July20/23July20_9.csv", "F")
+# cages23july10 <- bring_in_data("5015_lowfat/23July20/23July20_10.csv", "F")
+# cages23july11 <- bring_in_data("5015_lowfat/23July20/23July20_11.csv", "F")
+# 
+# cages23july <- merge_data(rbind(cages23july9,cages23july10,cages23july11))
+# 
+# ggplot(cages23july, aes(as.POSIXct(with(cages23july, StartDate + hms(StartTime))),y=Deg_C))+
+#   scale_x_datetime(date_breaks = "2 hours", date_labels = "%H:%M")+
+#   geom_line()
+```
+
+modified males
+wrong night time ramp
+```{r}
+# weight_ID("6-Aug-20")
+# cages6aug1 <- bring_in_data("5015_lowfat/6Aug20/6Aug20_1.csv", "M")
+# cages6aug2 <- bring_in_data("5015_lowfat/6Aug20/6Aug20_2.csv", "M")
+# cages6aug3 <- bring_in_data("5015_lowfat/6Aug20/6Aug20_3.csv", "M")
+# cages6aug4 <- bring_in_data("5015_lowfat/6Aug20/6Aug20_4.csv", "M")
+# cages6aug5 <- bring_in_data("5015_lowfat/6Aug20/6Aug20_5.csv", "M")
+# cages6aug6 <- bring_in_data("5015_lowfat/6Aug20/6Aug20_6.csv", "M")
+# 
+# cages6aug <-merge_data(rbind(cages6aug3,cages6aug4,cages6aug5,cages6aug6))
+# 
+# ggplot(cages6aug, aes(as.POSIXct(with(cages6aug, StartDate + hms(StartTime))),y=Deg_C))+
+#   scale_x_datetime(date_breaks = "2 hours", date_labels = "%H:%M")+
+#   geom_line()
+```
+
+modified females
+```{r}
+weight_ID("13-Aug-20")
+cages13aug1 <- bring_in_data("5015_lowfat/13Aug20/13Aug20_1.csv", "F")
+cages13aug2 <- bring_in_data("5015_lowfat/13Aug20/13Aug20_2.csv", "F")
+cages13aug3 <- bring_in_data("5015_lowfat/13Aug20/13Aug20_3.csv", "F")
+cages13aug4 <- bring_in_data("5015_lowfat/13Aug20/13Aug20_4.csv", "F")
+cages13aug5 <- bring_in_data("5015_lowfat/13Aug20/13Aug20_5.csv", "F")
+cages13aug6 <- bring_in_data("5015_lowfat/13Aug20/13Aug20_6.csv", "F")
+cages13aug7 <- bring_in_data("5015_lowfat/13Aug20/13Aug20_7.csv", "F")
+
+cages13aug <- merge_data(rbind(cages13aug7))
+cages13aug$block <- "cages13aug"
+
+ggplot(cages13aug, aes(as.POSIXct(with(cages13aug, StartDate + hms(StartTime))),y=Deg_C))+
+  scale_x_datetime(date_breaks = "2 hours", date_labels = "%H:%M")+
+  geom_line()
+```
+
+check sex when sacing
+```{r}
+weight_ID("21-Aug-20")
+cages21aug1 <- bring_in_data("5015_lowfat/21Aug20/21Aug20.csv", "M")
+
+
+cages21aug <- merge_data(rbind(cages21aug1))
+cages21aug$block <- "cages21aug"
+
+
+ggplot(cages21aug, aes(as.POSIXct(with(cages21aug, StartDate + hms(StartTime))),y=Deg_C))+
+  scale_x_datetime(date_breaks = "2 hours", date_labels = "%H:%M")+
+  geom_line()
+```
+
+```{r}
+weight_ID("25-Aug-20")
+cages25aug1 <- bring_in_data("5015_lowfat/14Sep20/14Sep20.csv", "M")
+
+
+cages25aug <- merge_data(rbind(cages25aug1))
+cages25aug$block <- "cages25aug"
+
+ggplot(cages25aug, aes(as.POSIXct(with(cages25aug, StartDate + hms(StartTime))),y=Deg_C))+
+  scale_x_datetime(date_breaks = "2 hours", date_labels = "%H:%M")+
+  geom_line()
+```
+
+```{r}
+weight_ID("18-Sep-20")
+cages18sep1 <- bring_in_data("5015_lowfat/18Sep20/18Sep20.csv", "F")
+
+
+cages18sep <- merge_data(rbind(cages18sep1))
+cages18sep$block <- "cages18sep"
+
+ggplot(cages18sep, aes(as.POSIXct(with(cages18sep, StartDate + hms(StartTime))),y=Deg_C))+
+  scale_x_datetime(date_breaks = "2 hours", date_labels = "%H:%M")+
+  geom_line()
+```
+
+
+"final" data sets
+```{r}
+#baseline <- rbind(cages26feb, cages10mar, cages20feb, cages14mar)
+#baseline$experiment <- "Standard"
+#baseline$FQ <- 0.8907387
+
+modified <- rbind(cages13aug,cages21aug,cages25aug,cages18sep)
+modified$experiment <- "Low Fat"
+modified$FQ <- 0.92266
+modified$seconds <- as.numeric(modified$StartTime)
+modified$TimeOfDay <- ifelse(modified$seconds %in% nighttime_interval, "night", "day")
+target <- c(0,1,2,3,4,5,6)
+modified <- modified %>% filter(animal %in% target)
+modified$dob <- NA
+
+#modified <- rbind(cages13aug,cages21aug,cages25aug,cages18sep)
+#modified$experiment <- "Low Fat"
+#modified$FQ <- 0.92266
+
+```
+
+select your data set for all down stream code. this should be changed depending on what down stream analysis you are doing 
+```{r}
+all_animals <- rbind(modified, baseline)
+
+#remove empty cage 
+target <- c(0,1,2,3,4,5,6)
+cages <- all_animals %>% filter(animal %in% target)
+```
+
+getting data clean and analysis ready 
+```{r}
+analysis_data <- cages[,c("Sex","EE","H2Omg", "RQ", "StartTime","Animal_ID", "VO2", "VCO2", "Deg_C", "weight", "experiment", "SD_VCO2", "SD_VO2", "StartDate", "SD_H2Omg", "FQ", "block", "TimeOfDay")]
+
+#split the time up by hour to make it an easier vairable to work with
+analysis_data_edited <- data.frame(do.call('rbind', strsplit(as.character(analysis_data$StartTime),':',fixed=TRUE)))
+
+#add it back to the subseted data for analysis
+analysis_data_inter <- cbind(analysis_data,analysis_data_edited)
+analysis_data_final <- analysis_data_inter[,c("Sex","EE","H2Omg", "RQ","Animal_ID", "Deg_C", "weight", "experiment", "X1", "StartTime", "SD_VCO2", "SD_VO2", "SD_H2Omg", "VO2", "VCO2", "StartDate", "FQ", "block", "TimeOfDay")]
+
+analysis_data_final$Sex <- as.factor(analysis_data_final$Sex)
+analysis_data_final$hour <- analysis_data_final$X1
+analysis_data_final$X1 <- NULL
+analysis_data_final$Deg_C <- as.double(analysis_data_final$Deg_C)
+analysis_data_final$Animal_ID <- as.numeric(analysis_data_final$Animal_ID)
+analysis_data_final$experiment <- as.factor(analysis_data_final$experiment)
+
+names(analysis_data_final)[3] <- "H2Omg"
+
+
+write_csv(analysis_data_final, "~/Box Sync/Cactus_Mouse_Physiology/data/5015_lowfat/diet_analysis_data.csv")
+```
+
+temp needs to have one unmerged data set from the experiment you want to look at. haven't found a better way to do this yet
+
+#low fat is associated with physical stress
+#dehydrated with high fat diet the response will be more robust
+```{r}
+metric0 <- "Deg_C"
+target <- 7
+#the "cages20april" is what you will need to change to look at whatever temperature you are interest in
+cagetemp <- cages13aug %>% filter(animal %in% target)
+cagetemp <- tail(cagetemp, n=320)
+measurement_zero <- cagetemp %>%  dplyr::select(all_of(metric0))
+df<-as.data.frame(measurement_zero[[metric0]])
+
+temp_baseline <- ggplot(data = cagetemp,aes(x=as.POSIXct(StartTime),y=measurement_zero[[metric0]])) +
+  #geom_rect(xmin = 00:00:00, ymin = -Inf, xmax = 06:00:00, ymax = Inf,fill = "lightgray") +
+  geom_line(aes(), size = 2) +
+  theme(axis.text.x = element_blank(), axis.text.y=element_text(size=12), legend.position = "none") +
+  labs(x = "", y = metric0) +
+  scale_colour_viridis_d(legend_title, option = "C") +
+  scale_x_datetime(date_breaks = "2 hours", date_labels = "%H:%M") 
+
+metric1 <- "RQ"
+
+measurement_one <- cages %>%  dplyr::select(all_of(metric1))
+df<-as.data.frame(measurement_one[[metric1]])
+legend_title <- "Animal ID"
+
+RQ <- ggplot(data = cages,aes(colour=factor(experiment),x=as.POSIXct(StartTime),y=measurement_one[[metric1]]))+
+  geom_point(aes(alpha=0.2, group=as.factor(experiment), color=as.factor(experiment)), size = 1)+
+  theme(axis.text.x = element_blank(), axis.text.y=element_text(size=12))+
+  geom_smooth(data=df$V1, method='loess', span=.4, level=0.99, size=1.5)+
+  labs(x = "", y = metric1)+
+  scale_color_manual(legend_title, values=c("#0571B0", "grey31", "blue"))+
+  scale_x_datetime(date_breaks = "2 hours", date_labels = "%H:%M")+
+  #highfat
+  geom_hline(yintercept = 0.8907387, color='black', size=1.5)+
+  #lowfat
+  geom_hline(yintercept = 0.92266, color="white", size=1.5)+
+  ylim(0.5, 2)+
+  guides(alpha=FALSE)+
+  theme_classic()
+
+metric2 <- "VCO2"
+
+measurement_two <- cages %>%  dplyr::select(all_of(metric2))
+df<-as.data.frame(measurement_two[[metric2]])
+legend_title <- "Animal ID"
+
+EE <- ggplot(data = cages,aes(colour=factor(experiment),x=as.POSIXct(StartTime),y=measurement_two[[metric2]]))+
+  #geom_point(aes(alpha=0.2,group=as.factor(experiment), color=as.factor(experiment)), size = 1,)+
+  theme(axis.text.x = element_blank(), axis.text.y=element_text(size=12), legend.position = "none")+
+  geom_smooth(data=df$V1, method='loess', span=.4, level=0.99)+
+  labs(x = "", y = metric2)+
+  scale_color_manual(values=c("#0571B0", "grey31", "blue"))+
+  scale_x_datetime(date_breaks = "2 hours", date_labels = "%H:%M")+
+  theme_classic()+
+  facet_grid(cols = vars(Sex))
+
+metric3 <- "H2Omg"
+
+measurement_three <- cages %>%  dplyr::select(all_of(metric3))
+df<-as.data.frame(measurement_three[[metric3]])
+legend_title <- "Animal ID"
+
+h2o <- ggplot(data = cages,aes(colour=factor(experiment),x=seconds,y=measurement_three[[metric3]]))+
+  geom_rect(data = cages, aes(xmin = 0 , xmax = 21600, ymin = -Inf, ymax = Inf, alpha = 0.4), fill = "grey", color = "grey")+
+  geom_rect(data = cages, aes(xmin = 75600 , xmax = 90000, ymin = -Inf, ymax = Inf,alpha = 0.4),fill = "grey", color = "grey")+
+  geom_point(aes(alpha=0.3,group=as.factor(experiment), color=as.factor(experiment)), size = 1)+
+  theme(axis.text.y=element_text(size=12), legend.position = "none", axis.text.x=element_text(size=12))+
+  geom_smooth(data=df$V1, method='loess', span=.1, level=0.99)+
+  labs(x = "", y = metric3)+
+  scale_color_manual(values=c("#0571B0", "grey31", "blue"))+
+  #scale_x_datetime(date_breaks = "2 hours", date_labels = "%H:%M")+
+  theme_classic()
+
+#RQ/EE/h2o
+
+#green is the low fat diet FQ line
+#orange is the baseline high fat diet
+```
