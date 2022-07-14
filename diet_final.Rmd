@@ -1,0 +1,259 @@
+---
+title: "diet_final"
+author: "Dani Blumstein"
+date: "7/14/2022"
+output: html_document
+---
+
+```{r}
+setwd("~/Documents/UNH/metabolic chamber/diet")
+
+#call adams fancy functions
+source("functions.R")
+```
+
+bring in libs
+```{r}
+library(devtools)
+library(tidyverse)
+library(lubridate)
+library(readr)
+library(viridis)
+library(patchwork)
+library(tidyselect)
+library(readxl)
+```
+
+import data
+electrolyte and weight data
+and path to files. this should be one of the only things edited for now 
+```{r}
+path <- "respo_data/"
+electrolyte_data <- read_excel("respo_data/electrolyte_data_edited.xlsx", na = "NA")
+
+```
+
+```{r}
+weight_ID("26-Feb-20")
+cages26feb <- merge_data(bring_in_data("feb26.csv", "M"))
+cages26feb$block <- "cages26feb"
+
+#DLS shift
+cages26feb$DateTime <-as.POSIXct(cages26feb$DateTime)
+cages26feb$StartTime <-as.POSIXct(cages26feb$StartTime)
+
+cages26feb$StartTime <- cages26feb$StartTime+ 1*60*60
+cages26feb$DateTime <- cages26feb$DateTime+ 1*60*60
+ 
+ggplot(cages26feb, aes(as.POSIXct(with(cages26feb, StartTime)),y=H2Omg))+
+  geom_point()+
+  scale_x_datetime(date_breaks = "3 hours", date_labels = "%H:%M")
+```
+
+```{r}
+weight_ID("5-Mar-20")
+cages10mar <- merge_data(bring_in_data("mar10.csv", "M"))
+cages10mar$block <- "cages10mar"
+
+ggplot(cages10mar, aes(as.POSIXct(with(cages10mar, StartTime)),y=H2Omg))+
+  geom_point()+
+  scale_x_datetime(date_breaks = "3 hours", date_labels = "%H:%M")
+```
+
+```{r}
+weight_ID("20-Feb-20")
+cages20feb <- merge_data(bring_in_data("feb20.csv", "F"))
+cages20feb$block <- "cages20feb"
+
+cages20feb$DateTime <-as.POSIXct(cages20feb$DateTime)
+cages20feb$StartTime <-as.POSIXct(cages20feb$StartTime)
+
+cages20feb$StartTime <- cages20feb$StartTime+ 1*60*60
+cages20feb$DateTime <- cages20feb$StartTime+ 1*60*60
+
+ggplot(cages20feb, aes(as.POSIXct(with(cages20feb, StartTime)),y=H2Omg))+
+  geom_point()+
+  scale_x_datetime(date_breaks = "3 hours", date_labels = "%H:%M")
+```
+
+```{r}
+weight_ID("14-Mar-20")
+cages14mar <- merge_data(bring_in_data("mar14.csv", "F"))
+cages14mar$block <- "cages14mar"
+
+ggplot(cages14mar, aes(as.POSIXct(with(cages14mar, StartDate + hms(StartTime))),y=Deg_C))+
+  geom_line()
+```
+
+```{r}
+weight_ID("13-Aug-20")
+cages13aug7 <- bring_in_data("13Aug20_7.csv", "F")
+
+cages13aug <- merge_data(rbind(cages13aug7))
+cages13aug$block <- "cages13aug"
+
+ggplot(cages13aug, aes(as.POSIXct(with(cages13aug, StartDate + hms(StartTime))),y=H2Omg))+
+  scale_x_datetime(date_breaks = "2 hours", date_labels = "%H:%M")+
+  geom_point()
+```
+
+```{r}
+weight_ID("21-Aug-20")
+cages21aug1 <- bring_in_data("21Aug20.csv", "M")
+
+
+cages21aug <- merge_data(rbind(cages21aug1))
+cages21aug$block <- "cages21aug"
+
+
+ggplot(cages21aug, aes(as.POSIXct(with(cages21aug, StartDate + hms(StartTime))),y=H2Omg))+
+  scale_x_datetime(date_breaks = "2 hours", date_labels = "%H:%M")+
+  geom_point()
+```
+
+
+```{r}
+weight_ID("25-Aug-20")
+cages25aug1 <- bring_in_data("14Sep20.csv", "M")
+
+
+cages25aug <- merge_data(rbind(cages25aug1))
+cages25aug$block <- "cages25aug"
+
+ggplot(cages25aug, aes(as.POSIXct(with(cages25aug, StartDate + hms(StartTime))),y=Deg_C))+
+  scale_x_datetime(date_breaks = "2 hours", date_labels = "%H:%M")+
+  geom_line()
+```
+
+```{r}
+weight_ID("18-Sep-20")
+cages18sep1 <- bring_in_data("18Sep20.csv", "F")
+
+
+cages18sep <- merge_data(rbind(cages18sep1))
+cages18sep$block <- "cages18sep"
+
+ggplot(cages18sep, aes(as.POSIXct(with(cages18sep, StartDate + hms(StartTime))),y=Deg_C))+
+  scale_x_datetime(date_breaks = "2 hours", date_labels = "%H:%M")+
+  geom_line()
+```
+
+```{r}
+# Establish when each interval/transition starts and stops in seconds
+#Daytime interval: hrs:8:00-21:00
+daytime_interval <- period_to_seconds(hms("09:00:00")):period_to_seconds(hms("20:00:00"))
+#Night time: hrs 22:00-5:00 (do NOT do a 22:5 sequence as it will count backwards from 22 to 5...)
+nighttime_interval <- c((period_to_seconds(hms("21:00:01")):period_to_seconds(hms("24:59:59"))), #evening portion of 'nighttime'
+                        (period_to_seconds(hms("00:00:00")):period_to_seconds(hms("06:00:00")))) #morning portion of 'nightitme'
+#Morning transition (t1): 6:00-9:00
+t1_interval <- period_to_seconds(hms("06:00:00")):period_to_seconds(hms("09:00:00"))
+#Evening transition (t2): 20-21:00
+t2_interval <- period_to_seconds(hms("20:00:00")):period_to_seconds(hms("21:00:00"))
+
+```
+
+"final" data sets
+```{r}
+baseline <- rbind(cages26feb, cages10mar, cages20feb, cages14mar)
+baseline$experiment <- "Standard"
+baseline$FQ <- 0.8907387
+baseline$seconds <- as.numeric(baseline$StartTime)
+
+modified <- rbind(cages13aug,cages21aug,cages25aug,cages18sep)
+modified$experiment <- "Low Fat"
+modified$FQ <- 0.92266
+modified$seconds <- as.numeric(modified$StartTime)
+```
+
+select your data set for all down stream code. this should be changed depending on what down stream analysis you are doing 
+```{r}
+all_animals <- rbind(modified, baseline)
+
+#remove empty cage 
+target <- c(0,1,2,3,4,5,6)
+cages <- all_animals %>% filter(animal %in% target)
+```
+
+getting data clean and analysis ready 
+```{r}
+analysis_data <- cages[,c("Sex","EE","H2Omg", "RQ", "StartTime","Animal_ID", "VO2", "VCO2", "Deg_C", "weight", "experiment", "SD_VCO2", "SD_VO2", "StartDate", "SD_H2Omg", "FQ", "block")]
+
+#split the time up by hour to make it an easier vairable to work with
+analysis_data_edited <- data.frame(do.call('rbind', strsplit(as.character(analysis_data$StartTime),':',fixed=TRUE)))
+
+#add it back to the subseted data for analysis
+analysis_data_inter <- cbind(analysis_data,analysis_data_edited)
+analysis_data_final <- analysis_data_inter[,c("Sex","EE","H2Omg", "RQ","Animal_ID", "Deg_C", "weight", "experiment", "X1", "StartTime", "SD_VCO2", "SD_VO2", "SD_H2Omg", "VO2", "VCO2", "StartDate", "FQ", "block")]
+
+analysis_data_final$Sex <- as.factor(analysis_data_final$Sex)
+analysis_data_final$hour <- analysis_data_final$X1
+analysis_data_final$X1 <- NULL
+analysis_data_final$Deg_C <- as.double(analysis_data_final$Deg_C)
+analysis_data_final$Animal_ID <- as.numeric(analysis_data_final$Animal_ID)
+analysis_data_final$experiment <- as.factor(analysis_data_final$experiment)
+
+names(analysis_data_final)[3] <- "H2Omg"
+
+analysis_data_final$hour <- as.numeric(analysis_data_final$hour)
+unique(analysis_data_final$Animal_ID)
+
+
+write_csv(analysis_data_final, "diet_analysis_data.csv")
+```
+
+```{r}
+metric1 <- "RQ"
+
+measurement_one <- analysis_data_final %>%  dplyr::select(all_of(metric1))
+df<-as.data.frame(measurement_one[[metric1]])
+legend_title <- "Animal ID"
+
+RQ <- ggplot(data = analysis_data_final,aes(colour=factor(experiment),x=as.POSIXct(StartTime),y=measurement_one[[metric1]]))+
+  geom_point(aes(alpha=0.2, group=as.factor(experiment), color=as.factor(experiment)), size = 1)+
+  theme(axis.text.x = element_blank(), axis.text.y=element_text(size=12))+
+  geom_smooth(data=df$V1, method='loess', span=.4, level=0.99, size=1.5)+
+  labs(x = "", y = metric1)+
+  scale_color_manual(legend_title, values=c("#0571B0", "grey31", "blue"))+
+  scale_x_datetime(date_breaks = "2 hours", date_labels = "%H:%M")+
+  #highfat
+  geom_hline(yintercept = 0.8907387, color='black', size=1.5)+
+  #lowfat
+  geom_hline(yintercept = 0.92266, color="white", size=1.5)+
+  ylim(0.5, 2)+
+  guides(alpha=FALSE)+
+  theme_classic()
+
+metric2 <- "EE"
+
+measurement_two <- analysis_data_final %>%  dplyr::select(all_of(metric2))
+df<-as.data.frame(measurement_two[[metric2]])
+legend_title <- "Animal ID"
+
+EE <- ggplot(data = analysis_data_final,aes(colour=factor(experiment),x=as.POSIXct(StartTime),y=measurement_two[[metric2]]))+
+  #geom_point(aes(alpha=0.2,group=as.factor(experiment), color=as.factor(experiment)), size = 1,)+
+  theme(axis.text.x = element_blank(), axis.text.y=element_text(size=12), legend.position = "none")+
+  geom_smooth(data=df$V1, method='loess', span=.4, level=0.99)+
+  labs(x = "", y = metric2)+
+  scale_color_manual(values=c("#0571B0", "grey31", "blue"))+
+  scale_x_datetime(date_breaks = "2 hours", date_labels = "%H:%M")+
+  theme_classic()+
+  facet_grid(cols = vars(Sex))
+
+metric3 <- "H2Omg"
+
+measurement_three <- cages %>%  dplyr::select(all_of(metric3))
+df<-as.data.frame(measurement_three[[metric3]])
+legend_title <- "Animal ID"
+
+h2o <- ggplot(data = cages,aes(colour=factor(experiment),x=as.POSIXct(StartTime),y=measurement_three[[metric3]]))+
+  geom_point(aes(alpha=0.2,group=as.factor(experiment), color=as.factor(experiment)), size = 1)+
+  theme(axis.text.y=element_text(size=12), legend.position = "none", axis.text.x=element_text(size=12))+
+  geom_smooth(data=df$V1, method='loess', span=.1, level=0.99)+
+  labs(x = "", y = metric3)+
+  scale_color_manual(values=c("#0571B0", "grey31", "blue"))+
+  scale_x_datetime(date_breaks = "2 hours", date_labels = "%H:%M")
+
+
+RQ/EE/h2o
+```
+
