@@ -12,16 +12,43 @@ setwd("~/Documents/UNH/metabolic chamber/diet")
 source("functions.R")
 ```
 
-bring in libs
+bring in libs (note all might be used)
 ```{r}
 library(devtools)
 library(tidyverse)
 library(lubridate)
 library(readr)
-library(viridis)
 library(patchwork)
 library(tidyselect)
 library(readxl)
+library(reshape)
+library(reshape2)
+library(data.table)
+library(gridExtra)
+library(grid)
+library(ggplot2)
+library(car) 
+library(ggpubr)
+library(ggpmisc)
+library(rlist)
+library(broom)
+library(nlme)
+library(rstatix)
+library(compositions)
+library(maditr)
+library(RColorBrewer)
+library(mcp)
+library(EnvCpt)
+require(grDevices)
+library(ggfortify)
+library(tsbox)
+library(zoo)
+library(bcp)
+library(plyr)
+library(cowplot)
+library(broom)
+library(gridGraphics)
+library(ggsignif)
 ```
 
 import data
@@ -256,4 +283,128 @@ h2o <- ggplot(data = cages,aes(colour=factor(experiment),x=as.POSIXct(StartTime)
 
 RQ/EE/h2o
 ```
+read in the data and change to right data types
+```{r}
+data <- read_csv("diet_analysis_data.csv", 
+                 col_types = cols(Sex = col_character(),
+                                  EE = col_double(),
+                                  H2Omg = col_double(),
+                                  RQ = col_double(),
+                                  Animal_ID = col_character(),
+                                  Deg_C = col_double(),
+                                  weight = col_double(),
+                                  experiment = col_character(),
+                                  StartTime = col_character(), #col_time(format = "%H:%M:%S"), - changed for easy use of lubridate
+                                  SD_VCO2 = col_double(),
+                                  SD_VO2 = col_double(),
+                                  SD_H2Omg = col_double(),
+                                  VO2 = col_double(),
+                                  VCO2 = col_double(),
+                                  StartDate = col_date(format = "%Y-%m-%d"), 
+                                  hour = col_integer()))
 
+all_M = data[data$Sex == 'M', ]
+all_F = data[data$Sex == 'F', ]
+```
+
+# IDENTIFY AND REMOVE OUTLIERS
+### MALES ###
+```{r}
+count = 1
+dependent_variables = c("EE", "RQ", "VO2", "VCO2", "H2Omg")
+varname_list = c("EE_OLs","RQ_OLs","VO2_OLs","VCO2_OLs","H2O_OLs")
+
+
+for (DV in dependent_variables){
+  print(DV)
+    model <- lm(as.formula(paste0(DV, " ~ weight + experiment")), data = all_M)
+  model.metrics <- augment(model) %>% select(-.hat, -.sigma, -.fitted)
+  summ <- model.metrics %>% filter(abs(.std.resid) > 3) %>% as.data.frame()
+
+    OL_list = c()
+  masterlist = c()
+  for (each_outlier_row in 1:nrow(summ)){
+    this_weight <- summ[each_outlier_row, "weight"]
+    this_DV  <- summ[each_outlier_row, DV]
+    OL_list <- c(OL_list, (which(all_M$weight == this_weight & all_M[DV] == this_DV)))
+
+  }
+  print(OL_list)
+  #Assign list of outliers to specified variable lists (OL_list_EE, RQ, VO2, VCO2, mgH2O)
+  assign(paste("OL_list_", DV, sep = ""), OL_list)  
+}
+
+masterlist <- c(OL_list_EE, OL_list_RQ, OL_list_VO2, OL_list_VCO2, OL_list_H2Omg)
+masterlist_noDup <- unique(masterlist)
+
+all_noOL_M <- all_M[-c(masterlist_noDup),]
+dim(all_M) #6470 
+dim(all_noOL_M) #6255
+write.csv(all_noOL_M, "all_noOL_M.csv", row.names = FALSE)
+```
+
+# IDENTIFY AND REMOVE OUTLIERS
+#### FEMALES ####
+```{r}
+count = 1
+dependent_variables = c("EE", "RQ", "VO2", "VCO2", "H2Omg")
+varname_list = c("EE_OLs","RQ_OLs","VO2_OLs","VCO2_OLs","H2O_OLs")
+
+for (DV in dependent_variables){
+  print(DV)
+  model <- lm(as.formula(paste0(DV, " ~ weight + experiment")), data = all_F)
+  model.metrics <- augment(model) %>% select(-.hat, -.sigma, -.fitted)
+  summ <- model.metrics %>% filter(abs(.std.resid) > 3) %>% as.data.frame()
+  OL_list = c()
+  masterlist = c()
+  for (each_outlier_row in 1:nrow(summ)){
+    this_weight <- summ[each_outlier_row, "weight"]
+    this_DV  <- summ[each_outlier_row, DV]
+    OL_list <- c(OL_list, (which(all_F$weight == this_weight & all_F[DV] == this_DV)))
+    
+  }
+  print(OL_list)
+  assign(paste("OL_list_", DV, sep = ""), OL_list)  
+}
+
+masterlist <- c(OL_list_EE, OL_list_RQ, OL_list_VO2, OL_list_VCO2, OL_list_H2Omg)
+masterlist_noDup <- unique(masterlist)
+all_noOL_F <- all_F[-c(masterlist_noDup),]
+write.csv(all_noOL_F, "all_noOL_F.csv", row.names=FALSE)
+```
+
+data needed for gamm analysis
+```{r}
+all_noOL <- rbind(all_noOL_M,all_noOL_F)
+```
+
+
+weight and electro t tests
+```{r}
+#electrolyte_data <- read.csv("~/Box Sync/Cactus_Mouse_Physiology/data/electrolyte_data.csv")
+
+subset1 <- subset(electrolyte_data, electrolyte_data$experiment == "5015_lowfat")
+subset2 <- subset(electrolyte_data, electrolyte_data$experiment == "baseline")
+
+diet <- rbind(subset1, subset2)
+
+diet$experiment <- as.factor(diet$experiment)
+diet$sex <- as.factor(diet$sex)
+
+diet_exp <- diet %>% select(1, 4)
+diet_exp$experiment <- as.factor(diet_exp$experiment)
+diet_exp$weight <- as.numeric(diet_exp$weight)
+t.test(diet_exp$weight~diet_exp$experiment)
+
+diet_sex <- diet %>% select(2, 4)
+diet_sex$sex <- as.factor(diet_sex$sex)
+diet_sex$weight <- as.numeric(diet_sex$weight)
+t.test(diet_sex$weight~diet_sex$sex)
+
+
+electros <- diet %>% select(1,5:ncol(diet))
+lapply(electros[-1], function(x) t.test(x ~ electros$experiment))
+
+electros <- diet %>% select(2,5:ncol(diet))
+lapply(electros[-1], function(x) t.test(x ~ electros$sex))
+```
